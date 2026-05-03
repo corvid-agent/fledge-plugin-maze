@@ -1,0 +1,17 @@
+[package]
+name = "fledge-plugin-maze"
+version = "0.2.0"
+edition = "2021"
+
+[[bin]]
+name = "maze"
+path = "src/main.rs"
+
+[dependencies]
+crossterm = "0.28"
+rand = "0.9"
+
+[profile.release]
+strip = true
+lto = true
+opt-level = "z"

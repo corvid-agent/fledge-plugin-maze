@@ -1,7 +1,2 @@
-# Build artifacts
-/target/
-/dist/
-
-# OS
-.DS_Store
-Thumbs.db
+target/
+*.swp
