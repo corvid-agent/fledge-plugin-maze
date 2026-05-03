@@ -1,0 +1,256 @@
+#!/usr/bin/env bash
+set -euo pipefail
+PLUGIN_DIR="${FLEDGE_PLUGIN_DIR:?FLEDGE_PLUGIN_DIR not set — fledge >= 0.15.3 sets it automatically}"
+
+usage() {
+    cat <<'EOF'
+fledge maze — terminal maze generator and solver
+
+USAGE:
+    fledge maze [options]
+
+OPTIONS:
+    --width <n>     Maze width in cells (default: 20)
+    --height <n>    Maze height in cells (default: 10)
+    --seed <n>      Random seed for reproducible mazes
+    --solve         Show solution path
+    --ascii         Use ASCII instead of Unicode box-drawing
+    --help          Show this help
+
+EXAMPLES:
+    fledge maze
+    fledge maze --width 30 --height 15
+    fledge maze --seed 42 --solve
+    fledge maze --ascii
+EOF
+}
+
+WIDTH=20
+HEIGHT=10
+SEED=""
+SOLVE=false
+ASCII=false
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --width)  WIDTH="$2"; shift 2 ;;
+        --height) HEIGHT="$2"; shift 2 ;;
+        --seed)   SEED="$2"; shift 2 ;;
+        --solve)  SOLVE=true; shift ;;
+        --ascii)  ASCII=true; shift ;;
+        --help|-h) usage; exit 0 ;;
+        *) echo "Unknown option: $1"; usage; exit 1 ;;
+    esac
+done
+
+if [[ -n "$SEED" ]]; then
+    RANDOM=$SEED
+fi
+
+declare -a walls_h
+declare -a walls_v
+
+total_cells=$((WIDTH * HEIGHT))
+
+for ((i = 0; i < WIDTH * (HEIGHT + 1); i++)); do
+    walls_h[$i]=1
+done
+for ((i = 0; i < (WIDTH + 1) * HEIGHT; i++)); do
+    walls_v[$i]=1
+done
+
+declare -a visited
+declare -a stack
+
+for ((i = 0; i < total_cells; i++)); do
+    visited[$i]=0
+done
+
+get_h_wall() { echo "${walls_h[$((($2) * WIDTH + $1))]:-1}"; }
+get_v_wall() { echo "${walls_v[$((($2) * (WIDTH + 1) + $1))]:-1}"; }
+set_h_wall() { walls_h[$((($2) * WIDTH + $1))]=$3; }
+set_v_wall() { walls_v[$((($2) * (WIDTH + 1) + $1))]=$3; }
+
+cell_idx() { echo $(($2 * WIDTH + $1)); }
+
+start_x=0
+start_y=0
+visited[$(cell_idx $start_x $start_y)]=1
+stack=("$start_x,$start_y")
+
+stack_top=0
+
+while [[ $stack_top -ge 0 ]]; do
+    current="${stack[$stack_top]}"
+    cx=${current%,*}
+    cy=${current#*,}
+
+    neighbors=()
+    if [[ $cy -gt 0 ]] && [[ ${visited[$(cell_idx $cx $((cy-1)))]} -eq 0 ]]; then
+        neighbors+=("$cx,$((cy-1)),h,$cx,$cy")
+    fi
+    if [[ $cy -lt $((HEIGHT-1)) ]] && [[ ${visited[$(cell_idx $cx $((cy+1)))]} -eq 0 ]]; then
+        neighbors+=("$cx,$((cy+1)),h,$cx,$((cy+1))")
+    fi
+    if [[ $cx -gt 0 ]] && [[ ${visited[$(cell_idx $((cx-1)) $cy)]} -eq 0 ]]; then
+        neighbors+=("$((cx-1)),$cy,v,$cx,$cy")
+    fi
+    if [[ $cx -lt $((WIDTH-1)) ]] && [[ ${visited[$(cell_idx $((cx+1)) $cy)]} -eq 0 ]]; then
+        neighbors+=("$((cx+1)),$cy,v,$((cx+1)),$cy")
+    fi
+
+    if [[ ${#neighbors[@]} -gt 0 ]]; then
+        pick=${neighbors[$((RANDOM % ${#neighbors[@]}))]}
+        IFS=',' read -r nx ny wtype wx wy <<< "$pick"
+
+        if [[ "$wtype" == "h" ]]; then
+            set_h_wall "$wx" "$wy" 0
+        else
+            set_v_wall "$wx" "$wy" 0
+        fi
+
+        visited[$(cell_idx $nx $ny)]=1
+        stack_top=$((stack_top + 1))
+        stack[$stack_top]="$nx,$ny"
+    else
+        stack_top=$((stack_top - 1))
+    fi
+done
+
+declare -a solution
+if [[ "$SOLVE" == "true" ]]; then
+    declare -a solve_visited
+    for ((i = 0; i < total_cells; i++)); do
+        solve_visited[$i]=0
+    done
+
+    declare -a solve_parent
+    for ((i = 0; i < total_cells; i++)); do
+        solve_parent[$i]=-1
+    done
+
+    queue_head=0
+    queue_tail=0
+    queue[$queue_tail]="0,0"
+    queue_tail=$((queue_tail + 1))
+    solve_visited[0]=1
+    end_idx=$(cell_idx $((WIDTH-1)) $((HEIGHT-1)))
+
+    while [[ $queue_head -lt $queue_tail ]]; do
+        current="${queue[$queue_head]}"
+        queue_head=$((queue_head + 1))
+        cx=${current%,*}
+        cy=${current#*,}
+        cidx=$(cell_idx $cx $cy)
+
+        if [[ $cidx -eq $end_idx ]]; then
+            break
+        fi
+
+        # Up
+        if [[ $cy -gt 0 ]]; then
+            nidx=$(cell_idx $cx $((cy-1)))
+            hw=$(get_h_wall $cx $cy)
+            if [[ $hw -eq 0 ]] && [[ ${solve_visited[$nidx]} -eq 0 ]]; then
+                solve_visited[$nidx]=1
+                solve_parent[$nidx]=$cidx
+                queue[$queue_tail]="$cx,$((cy-1))"; queue_tail=$((queue_tail + 1))
+            fi
+        fi
+        # Down
+        if [[ $cy -lt $((HEIGHT-1)) ]]; then
+            nidx=$(cell_idx $cx $((cy+1)))
+            hw=$(get_h_wall $cx $((cy+1)))
+            if [[ $hw -eq 0 ]] && [[ ${solve_visited[$nidx]} -eq 0 ]]; then
+                solve_visited[$nidx]=1
+                solve_parent[$nidx]=$cidx
+                queue[$queue_tail]="$cx,$((cy+1))"; queue_tail=$((queue_tail + 1))
+            fi
+        fi
+        # Left
+        if [[ $cx -gt 0 ]]; then
+            nidx=$(cell_idx $((cx-1)) $cy)
+            vw=$(get_v_wall $cx $cy)
+            if [[ $vw -eq 0 ]] && [[ ${solve_visited[$nidx]} -eq 0 ]]; then
+                solve_visited[$nidx]=1
+                solve_parent[$nidx]=$cidx
+                queue[$queue_tail]="$((cx-1)),$cy"; queue_tail=$((queue_tail + 1))
+            fi
+        fi
+        # Right
+        if [[ $cx -lt $((WIDTH-1)) ]]; then
+            nidx=$(cell_idx $((cx+1)) $cy)
+            vw=$(get_v_wall $((cx+1)) $cy)
+            if [[ $vw -eq 0 ]] && [[ ${solve_visited[$nidx]} -eq 0 ]]; then
+                solve_visited[$nidx]=1
+                solve_parent[$nidx]=$cidx
+                queue[$queue_tail]="$((cx+1)),$cy"; queue_tail=$((queue_tail + 1))
+            fi
+        fi
+    done
+
+    for ((i = 0; i < total_cells; i++)); do
+        solution[$i]=0
+    done
+    idx=$end_idx
+    while [[ $idx -ge 0 ]]; do
+        solution[$idx]=1
+        idx=${solve_parent[$idx]}
+    done
+fi
+
+if [[ "$ASCII" == "true" ]]; then
+    H_WALL="---"
+    V_WALL="|"
+    CORNER="+"
+    SPACE="   "
+    PATH_CHAR=" * "
+else
+    H_WALL="───"
+    V_WALL="│"
+    CORNER="┼"
+    SPACE="   "
+    PATH_CHAR=" · "
+fi
+
+for ((row = 0; row <= HEIGHT; row++)); do
+    line=""
+    for ((col = 0; col <= WIDTH; col++)); do
+        line+="$CORNER"
+        if [[ $col -lt $WIDTH ]]; then
+            hw=$(get_h_wall $col $row)
+            if [[ $hw -eq 1 ]]; then
+                line+="$H_WALL"
+            else
+                line+="$SPACE"
+            fi
+        fi
+    done
+    echo "$line"
+
+    if [[ $row -lt $HEIGHT ]]; then
+        line=""
+        for ((col = 0; col <= WIDTH; col++)); do
+            vw=$(get_v_wall $col $row)
+            if [[ $vw -eq 1 ]]; then
+                line+="$V_WALL"
+            else
+                line+=" "
+            fi
+            if [[ $col -lt $WIDTH ]]; then
+                cidx=$(cell_idx $col $row)
+                if [[ "$SOLVE" == "true" ]] && [[ ${solution[$cidx]:-0} -eq 1 ]]; then
+                    line+="$PATH_CHAR"
+                else
+                    line+="$SPACE"
+                fi
+            fi
+        done
+        echo "$line"
+    fi
+done
+
+if [[ "$SOLVE" == "true" ]]; then
+    echo ""
+    echo "Path: top-left → bottom-right"
+fi

@@ -1,0 +1,15 @@
+[plugin]
+name = "maze"
+version = "0.1.0"
+description = "Terminal maze generator and solver with Unicode rendering"
+author = "corvid-agent"
+
+[[commands]]
+name = "maze"
+description = "Generate and solve terminal mazes"
+binary = "bin/maze"
+
+[capabilities]
+exec = false
+store = false
+metadata = false
