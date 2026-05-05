@@ -1,5 +1,5 @@
 [plugin]
-name = "maze"
+name = "fledge-plugin-maze"
 version = "0.2.0"
 description = "Terminal maze generator and solver with Unicode rendering"
 author = "corvid-agent"
