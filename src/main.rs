@@ -348,7 +348,7 @@ fn render_static(maze: &Maze, solution: Option<&[bool]>, ascii: bool) {
                     let cidx = row * mw + col;
                     let is_start = col == 0 && row == 0;
                     let is_end = col == mw - 1 && row == mh - 1;
-                    let on_path = solution.map_or(false, |s| s[cidx]);
+                    let on_path = solution.is_some_and(|s| s[cidx]);
 
                     if is_start {
                         queue!(
@@ -369,12 +369,7 @@ fn render_static(maze: &Maze, solution: Option<&[bool]>, ascii: bool) {
                         )
                         .ok();
                     } else if on_path {
-                        queue!(
-                            w,
-                            SetForegroundColor(path_color),
-                            Print(" · "),
-                        )
-                        .ok();
+                        queue!(w, SetForegroundColor(path_color), Print(" · "),).ok();
                     } else {
                         queue!(w, ResetColor, Print("   ")).ok();
                     }
@@ -384,8 +379,8 @@ fn render_static(maze: &Maze, solution: Option<&[bool]>, ascii: bool) {
         }
     }
 
-    if solution.is_some() {
-        let path_count = solution.unwrap().iter().filter(|&&x| x).count();
+    if let Some(sol) = solution {
+        let path_count = sol.iter().filter(|&&x| x).count();
         queue!(
             w,
             Print('\n'),
@@ -402,7 +397,12 @@ fn render_static(maze: &Maze, solution: Option<&[bool]>, ascii: bool) {
     w.flush().ok();
 }
 
-fn render_animated(maze: &Maze, steps: &[CarvingStep], solution: &[bool], explore_order: &[(usize, usize)]) {
+fn render_animated(
+    maze: &Maze,
+    steps: &[CarvingStep],
+    solution: &[bool],
+    explore_order: &[(usize, usize)],
+) {
     let mut stdout = io::stdout();
     let mw = maze.width;
     let mh = maze.height;
@@ -498,13 +498,7 @@ fn render_animated(maze: &Maze, steps: &[CarvingStep], solution: &[bool], explor
         thread::sleep(delay);
 
         // Clear active cell marker
-        queue!(
-            stdout,
-            MoveTo(term_col, term_row),
-            ResetColor,
-            Print("   "),
-        )
-        .ok();
+        queue!(stdout, MoveTo(term_col, term_row), ResetColor, Print("   "),).ok();
     }
 
     // Update header
@@ -513,10 +507,7 @@ fn render_animated(maze: &Maze, steps: &[CarvingStep], solution: &[bool], explor
         MoveTo(0, 0),
         SetForegroundColor(Color::DarkCyan),
         SetAttribute(Attribute::Bold),
-        Print(format!(
-            " fledge maze — {}×{} — solving...       ",
-            mw, mh
-        )),
+        Print(format!(" fledge maze — {}×{} — solving...       ", mw, mh)),
         SetAttribute(Attribute::Reset),
         ResetColor,
     )
@@ -638,10 +629,7 @@ fn render_animated(maze: &Maze, steps: &[CarvingStep], solution: &[bool], explor
     execute!(stdout, Show, LeaveAlternateScreen).ok();
 
     // Print final summary to normal terminal
-    println!(
-        "Maze {}×{} — solved in {} steps",
-        mw, mh, path_count
-    );
+    println!("Maze {}×{} — solved in {} steps", mw, mh, path_count);
 }
 
 fn draw_full_grid(stdout: &mut io::Stdout, width: usize, height: usize, color: Color) {
@@ -685,13 +673,7 @@ fn redraw_intersection(stdout: &mut io::Stdout, maze: &Maze, col: usize, row: us
     let tc = (col * 4) as u16;
     let tr = (row * 2 + 1) as u16;
     let ch = maze.intersection_char(col, row, false);
-    queue!(
-        stdout,
-        MoveTo(tc, tr),
-        SetForegroundColor(color),
-        Print(ch),
-    )
-    .ok();
+    queue!(stdout, MoveTo(tc, tr), SetForegroundColor(color), Print(ch),).ok();
 }
 
 fn main() {
@@ -713,5 +695,165 @@ fn main() {
         render_static(&maze, Some(&solution), args.ascii);
     } else {
         render_static(&maze, None, args.ascii);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rand::rngs::StdRng;
+    use rand::SeedableRng;
+
+    fn make_maze(width: usize, height: usize, seed: u64) -> Maze {
+        let mut maze = Maze::new(width, height);
+        let mut rng = StdRng::seed_from_u64(seed);
+        maze.generate(&mut rng);
+        maze
+    }
+
+    #[test]
+    fn new_maze_has_all_walls() {
+        let maze = Maze::new(5, 5);
+        for row in 0..=5 {
+            for col in 0..5 {
+                assert!(maze.h_wall(col, row), "h_wall({col}, {row}) should be set");
+            }
+        }
+        for row in 0..5 {
+            for col in 0..=5 {
+                assert!(maze.v_wall(col, row), "v_wall({col}, {row}) should be set");
+            }
+        }
+    }
+
+    #[test]
+    fn generate_removes_walls() {
+        let maze = make_maze(10, 10, 42);
+        // After generation, some walls should be removed
+        let h_removed = maze.h_walls.iter().filter(|&&w| !w).count();
+        let v_removed = maze.v_walls.iter().filter(|&&w| !w).count();
+        assert!(h_removed + v_removed > 0, "generation should remove walls");
+        // For a perfect maze: exactly (width*height - 1) walls removed
+        let expected = 10 * 10 - 1;
+        assert_eq!(
+            h_removed + v_removed,
+            expected,
+            "perfect maze removes exactly W*H-1 walls"
+        );
+    }
+
+    #[test]
+    fn generate_is_deterministic_with_seed() {
+        let maze1 = make_maze(15, 10, 123);
+        let maze2 = make_maze(15, 10, 123);
+        assert_eq!(maze1.h_walls, maze2.h_walls);
+        assert_eq!(maze1.v_walls, maze2.v_walls);
+    }
+
+    #[test]
+    fn different_seeds_produce_different_mazes() {
+        let maze1 = make_maze(10, 10, 1);
+        let maze2 = make_maze(10, 10, 2);
+        assert_ne!(maze1.h_walls, maze2.h_walls);
+    }
+
+    #[test]
+    fn solve_finds_path() {
+        let maze = make_maze(10, 10, 42);
+        let (on_path, _) = maze.solve();
+        // Start and end must be on the path
+        assert!(on_path[0], "start cell should be on path");
+        assert!(on_path[10 * 10 - 1], "end cell should be on path");
+    }
+
+    #[test]
+    fn solve_path_is_connected() {
+        let maze = make_maze(8, 8, 99);
+        let (on_path, _) = maze.solve();
+        let w = 8;
+        let h = 8;
+
+        // Collect path cells
+        let path_cells: Vec<(usize, usize)> = (0..w * h)
+            .filter(|&i| on_path[i])
+            .map(|i| (i % w, i / w))
+            .collect();
+
+        // Each consecutive pair of path cells should be adjacent and have no wall between them
+        // We verify the path is contiguous via BFS on path cells only
+        let mut visited = vec![false; w * h];
+        let mut queue = std::collections::VecDeque::new();
+        queue.push_back((0usize, 0usize));
+        visited[0] = true;
+
+        while let Some((cx, cy)) = queue.pop_front() {
+            let neighbors = [
+                (cx.wrapping_sub(1), cy),
+                (cx + 1, cy),
+                (cx, cy.wrapping_sub(1)),
+                (cx, cy + 1),
+            ];
+            for (nx, ny) in neighbors {
+                if nx < w && ny < h {
+                    let nidx = ny * w + nx;
+                    if on_path[nidx] && !visited[nidx] {
+                        // Check wall between (cx,cy) and (nx,ny)
+                        let passable = if nx == cx + 1 {
+                            !maze.v_wall(nx, cy)
+                        } else if cx > 0 && nx == cx - 1 {
+                            !maze.v_wall(cx, cy)
+                        } else if ny == cy + 1 {
+                            !maze.h_wall(cx, ny)
+                        } else {
+                            !maze.h_wall(cx, cy)
+                        };
+                        if passable {
+                            visited[nidx] = true;
+                            queue.push_back((nx, ny));
+                        }
+                    }
+                }
+            }
+        }
+
+        // All path cells should have been visited
+        for &(px, py) in &path_cells {
+            assert!(
+                visited[py * w + px],
+                "path cell ({px}, {py}) should be reachable from start"
+            );
+        }
+    }
+
+    #[test]
+    fn solve_various_sizes() {
+        for (w, h) in [(2, 2), (3, 3), (5, 5), (20, 10), (50, 25)] {
+            let maze = make_maze(w, h, 7);
+            let (on_path, _) = maze.solve();
+            assert!(on_path[0], "start on path for {w}x{h}");
+            assert!(on_path[w * h - 1], "end on path for {w}x{h}");
+            let path_len = on_path.iter().filter(|&&x| x).count();
+            // Path length must be at least manhattan distance + 1
+            assert!(
+                path_len >= w + h - 1,
+                "path too short for {w}x{h}: got {path_len}"
+            );
+        }
+    }
+
+    #[test]
+    fn intersection_char_all_walls() {
+        let maze = Maze::new(3, 3);
+        // Interior intersection with all 4 walls present
+        assert_eq!(maze.intersection_char(1, 1, false), '\u{253C}'); // crossbar
+        assert_eq!(maze.intersection_char(1, 1, true), '+');
+    }
+
+    #[test]
+    fn minimum_size_maze() {
+        let maze = make_maze(2, 2, 0);
+        let (on_path, _) = maze.solve();
+        assert!(on_path[0]);
+        assert!(on_path[3]); // 2*2 - 1
     }
 }
